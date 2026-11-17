@@ -1,0 +1,8 @@
+.git
+**/.git
+**/__pycache__
+**/*.py[cod]
+.venv
+cgn_visualize_venv
+results
+outputs

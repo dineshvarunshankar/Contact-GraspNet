@@ -1,96 +1,49 @@
-IMAGE     = cgn_pytorch
-CONTAINER = cgn_run
+IMAGE ?= cgn_pytorch
+CONTAINER ?= cgn_run
+GPU_FLAGS ?= --gpus all
+
+RUN_FLAGS = --rm -it --user $(shell id -u):$(shell id -g) \
+	-e DISPLAY=$(DISPLAY) -e XDG_RUNTIME_DIR=/tmp \
+	-v /tmp/.X11-unix:/tmp/.X11-unix -v "$(CURDIR):/workspace"
 
 build:
-	docker build \
-	--build-arg BASE=nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 \
-	--build-arg PYTORCH_INDEX=https://download.pytorch.org/whl/cu124 \
-	-t $(IMAGE) .
+	docker build -t $(IMAGE) .
 
-# For Blackwell GPUs (RTX 5060/5070/5080/5090, sm_120) — requires CUDA 12.8 drivers
 build-blackwell:
 	docker build \
-	--build-arg BASE=nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04 \
-	--build-arg PYTORCH_INDEX=https://download.pytorch.org/whl/cu128 \
-	--build-arg TORCH_VERSION=2.7.0 \
-	--build-arg TORCHVISION_VERSION=0.22.0 \
-	-t $(IMAGE) .
+		--build-arg BASE=nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04 \
+		--build-arg PYTORCH_INDEX=https://download.pytorch.org/whl/cu128 \
+		--build-arg TORCH_VERSION=2.7.0 \
+		--build-arg TORCHVISION_VERSION=0.22.0 -t $(IMAGE) .
 
 build-cpu:
-	docker build \
-	--build-arg BASE=python:3.10-slim \
-	--build-arg PYTORCH_INDEX=https://download.pytorch.org/whl/cpu \
-	-t $(IMAGE)-cpu .
+	docker build --build-arg BASE=ubuntu:22.04 \
+		--build-arg PYTORCH_INDEX=https://download.pytorch.org/whl/cpu \
+		-t $(IMAGE)-cpu .
 
 run:
-	docker run --rm -it \
-	--gpus all \
-	--user $(shell id -u):$(shell id -g) \
-	-e DISPLAY=$(DISPLAY) \
-	-e XDG_RUNTIME_DIR=/tmp \
-	-v /tmp/.X11-unix:/tmp/.X11-unix \
-	-v $(PWD):/workspace \
-	--name $(CONTAINER) \
-	$(IMAGE)
+	docker run $(RUN_FLAGS) $(GPU_FLAGS) --name $(CONTAINER) $(IMAGE)
 
 run-cpu:
-	docker run --rm -it \
-	--user $(shell id -u):$(shell id -g) \
-	-v $(PWD):/workspace \
-	--name $(CONTAINER) \
-	$(IMAGE)-cpu
+	docker run $(RUN_FLAGS) --name $(CONTAINER) $(IMAGE)-cpu
 
 inference:
-	xhost +local:docker 2>/dev/null || true
-	docker run --rm -it \
-	--gpus all \
-	--user $(shell id -u):$(shell id -g) \
-	-e DISPLAY=$(DISPLAY) \
-	-e XDG_RUNTIME_DIR=/tmp \
-	-v /tmp/.X11-unix:/tmp/.X11-unix \
-	-v $(PWD):/workspace \
-	$(IMAGE) python -m contact_graspnet_pytorch.inference \
-	--np_path="test_data/*.npy" \
-	--local_regions \
-	--filter_grasps
+	docker run $(RUN_FLAGS) $(GPU_FLAGS) $(IMAGE) \
+		python -m contact_graspnet_pytorch.inference \
+		--ckpt_dir=/opt/cgn/checkpoints/contact_graspnet \
+		--np_path="test_data/*.npy" --local_regions --filter_grasps
 
-test:
-	docker run --rm -it \
-	--user $(shell id -u):$(shell id -g) \
-	-v $(PWD):/workspace \
-	$(IMAGE) python p1/pose_utils.py
-
-verify:
-	docker run --rm -it \
-	--gpus all \
-	--user $(shell id -u):$(shell id -g) \
-	-e DISPLAY=$(DISPLAY) \
-	-e XDG_RUNTIME_DIR=/tmp \
-	-v /tmp/.X11-unix:/tmp/.X11-unix \
-	-v $(PWD):/workspace \
-	$(IMAGE) python p1/verify_pointnet2.py
-
-# Visualization — runs inside Docker with X11 forwarding (opens interactive Open3D window)
 visualize:
-	xhost +local:docker 2>/dev/null || true
-	docker run --rm -it \
-	--gpus all \
-	--user $(shell id -u):$(shell id -g) \
-	-e DISPLAY=$(DISPLAY) \
-	-e XDG_RUNTIME_DIR=/tmp \
-	-v /tmp/.X11-unix:/tmp/.X11-unix \
-	-v $(PWD):/workspace \
-	$(IMAGE) python p1/visualize_predictions.py
+	docker run $(RUN_FLAGS) $(GPU_FLAGS) $(IMAGE) \
+		python -m p1.visualize_predictions
 
-# (Optional) host-side visualization fallback if X11 is unavailable
 setup-venv:
 	bash setup_venv.sh
 
 down:
-	docker stop $(CONTAINER) 2>/dev/null || true
-	docker rm $(CONTAINER) 2>/dev/null || true
+	docker stop $(CONTAINER)
 
 clean:
-	docker rmi $(IMAGE) $(IMAGE)-cpu 2>/dev/null || true
+	docker rmi $(IMAGE) $(IMAGE)-cpu
 
-.PHONY: build build-cpu run run-cpu inference test verify visualize setup-venv down clean
+.PHONY: build build-blackwell build-cpu run run-cpu inference visualize setup-venv down clean

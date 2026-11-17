@@ -1,18 +1,11 @@
-"""
-Load inference results from results/predictions_9.npz and render
-the top-K predicted grasps on the point cloud, saving a PNG.
-
-Usage:
-    python p1/visualize_predictions.py
-    python p1/visualize_predictions.py --npz results/predictions_9.npz --topk 50 --out results/viz_9.png
-"""
+"""Load saved predictions and display the highest-scoring grasps."""
 
 import argparse
-import numpy as np
-import sys
 import os
+import sys
 
-# Make p1/ importable when run from project root
+import numpy as np
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from p1.visualization import visualize_grasps
 
@@ -31,13 +24,11 @@ def main():
         print(f"File not found: {args.npz}")
         sys.exit(1)
 
-    data = np.load(args.npz, allow_pickle=True)
-    pc_full         = data["pc_full"]           # Nx3
-    pred_grasps_cam = data["pred_grasps_cam"].item()  # dict: seg_id to Mx4x4
-    scores          = data["scores"].item()            # dict: seg_id to M
-    pc_colors       = data.get("pc_colors", None)
-    if pc_colors is not None:
-        pc_colors = pc_colors
+    with np.load(args.npz, allow_pickle=True) as data:
+        pc_full = data["pc_full"]
+        pred_grasps_cam = data["pred_grasps_cam"].item()
+        scores = data["scores"].item()
+        pc_colors = data.get("pc_colors", None)
 
     print(f"Loaded: {args.npz}")
     print(f"  Point cloud: {pc_full.shape}")
@@ -48,10 +39,9 @@ def main():
         print(f"  Segment {k}: {len(v)} grasps, "
               f"scores [{scores[k].min():.3f}, {scores[k].max():.3f}]")
 
-    # Default output path: results/viz_9.png
     if args.out is None:
-        base = os.path.splitext(os.path.basename(args.npz))[0]  # predictions_9
-        name = base.replace("predictions_", "viz_")              # viz_9
+        base = os.path.splitext(os.path.basename(args.npz))[0]
+        name = base.replace("predictions_", "viz_")
         args.out = os.path.join(os.path.dirname(args.npz), name + ".png")
 
     visualize_grasps(

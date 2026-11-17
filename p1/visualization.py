@@ -1,8 +1,4 @@
-"""
-Visualizes predicted grasps on a point cloud scene using Open3D.
-Logic mirrors contact_graspnet/contact_graspnet/visualization_utils.py::draw_grasps
-and contact_graspnet_pytorch/contact_graspnet_pytorch/visualization_utils_o3d.py
-"""
+"""Draw Panda grasp poses and point clouds with Open3D."""
 
 import os
 import numpy as np
@@ -10,26 +6,14 @@ import open3d as o3d
 import matplotlib.pyplot as plt
 
 
-# Panda gripper geometry constants (metres)
-# These define the U-shaped wireframe in the gripper's local coordinate frame.
-# z-axis = approach direction, x-axis = baseline (finger-to-finger)
+# Panda local frame: z is approach; x is finger-to-finger. Lengths in meters.
 _APPROACH_DEPTH  = 0.0584   # wrist to finger root along z
 _GRIPPER_DEPTH   = 0.1034   # wrist to fingertip along z
 
 
 def _gripper_control_points(opening):
-    """
-    Returns 7x3 control points of the Panda gripper wireframe in local frame.
-    The path order draws: wrist → baseline_mid → left_root → left_tip
-                          → left_root → right_root → right_tip
-
-    Args:
-        opening (float): gripper opening width in metres
-
-    Returns:
-        np.ndarray: 7x3 control points
-    """
-    hw = opening / 2.0  # half-width
+    """Return the seven control points of the gripper wireframe."""
+    hw = opening / 2.0
 
     wrist        = [0,   0, 0]
     baseline_mid = [0,   0, _APPROACH_DEPTH]
@@ -43,30 +27,18 @@ def _gripper_control_points(opening):
         baseline_mid,
         left_root,
         left_tip,
-        left_root,      # backtrack to draw right side
+        left_root,
         right_root,
         right_tip,
     ], dtype=np.float64)
 
 
 def _gripper_lines_in_world(grasp_pose, opening):
-    """
-    Transforms gripper control points from local frame to world frame
-    using the 4x4 grasp pose, then builds Open3D line segments.
+    """Transform the wireframe into the grasp pose coordinate frame."""
+    pts_local = _gripper_control_points(opening)
 
-    Args:
-        grasp_pose (np.ndarray): 4x4 SE(3) grasp pose
-        opening    (float):      gripper opening width in metres
-
-    Returns:
-        tuple: (pts Nx3, connections Nx2) in world coordinates
-    """
-    pts_local = _gripper_control_points(opening)  # 7x3
-
-    # Apply rotation and translation: pts_world = R @ pts_local.T + t
     pts_world = (grasp_pose[:3, :3] @ pts_local.T).T + grasp_pose[:3, 3]
 
-    # Connect consecutive points: 0-1, 1-2, 2-3, 3-4, 4-5, 5-6
     N = len(pts_world)
     connections = np.stack([np.arange(N - 1), np.arange(1, N)], axis=1)
 
@@ -77,27 +49,16 @@ def visualize_grasps(pc, pred_grasps_cam, scores,
                      pc_colors=None, topk=50,
                      gripper_openings=None, default_opening=0.08,
                      save_path=None, show=True):
-    """
-    Renders the scene point cloud and top-k predicted grasps colored by score.
+    """Draw top-k grasps per segment, with optional PNG output.
 
-    When multiple segments are present, each segment gets a distinct color.
-    When only one segment exists (key -1, full scene), grasps are colored
-    individually by confidence using the viridis colormap — matching CGN behavior.
-
-    Args:
-        pc               (np.ndarray):        Nx3 scene point cloud
-        pred_grasps_cam  (dict[int, ndarray]): segment_id → Mx4x4 grasp poses
-        scores           (dict[int, ndarray]): segment_id → M confidence scores
-        pc_colors        (np.ndarray):         Nx3 RGB colors for point cloud (0-255)
-        topk             (int):                number of top grasps to show per segment
-        gripper_openings (dict[int, ndarray]): segment_id → M opening widths (metres)
-        default_opening  (float):              fallback opening if not provided
-        save_path        (str):                if set, saves render as PNG to this path
-        show             (bool):               open interactive Open3D window
+    Poses, scores, and openings are keyed by segment ID. Openings use meters.
+    Point colors are RGB values in [0, 255]. Single-segment grasps use score colors.
     """
+    if topk <= 0:
+        raise ValueError("topk must be positive")
+
     geometries = []
 
-    # Point cloud
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(pc[:, :3])
     if pc_colors is not None:
@@ -106,18 +67,16 @@ def visualize_grasps(pc, pred_grasps_cam, scores,
         pcd.paint_uniform_color([0.5, 0.5, 0.5])
     geometries.append(pcd)
 
-    # Colormaps
-    cm_segments = plt.get_cmap("rainbow")   # one color per segment
-    cm_scores   = plt.get_cmap("viridis")   # per-grasp score color
+    cm_segments = plt.get_cmap("rainbow")
+    cm_scores   = plt.get_cmap("viridis")
 
-    seg_keys = [k for k in pred_grasps_cam if np.any(pred_grasps_cam[k])]
+    seg_keys = [k for k, grasps in pred_grasps_cam.items() if len(grasps)]
     single_segment = (len(seg_keys) == 1)
 
     for seg_idx, k in enumerate(seg_keys):
         grasps_k = pred_grasps_cam[k]
         scores_k = scores[k]
 
-        # Select top-k by score
         n = min(topk, len(grasps_k))
         top_idcs = np.argsort(scores_k)[::-1][:n]
         grasps_k = grasps_k[top_idcs]
@@ -129,7 +88,6 @@ def visualize_grasps(pc, pred_grasps_cam, scores,
             else np.full(n, default_opening)
         )
 
-        # Assign colors
         if single_segment:
             s_min, s_max = scores_k.min(), scores_k.max()
             span = s_max - s_min if s_max > s_min else 1.0
@@ -140,15 +98,12 @@ def visualize_grasps(pc, pred_grasps_cam, scores,
             base_color = cm_segments(seg_idx / max(len(seg_keys) - 1, 1))[:3]
             grasp_colors = [base_color] * n
 
-        # Build LineSet for all grasps in this segment
         all_pts   = []
         all_conns = []
         all_colors = []
         offset = 0
 
-        for i, (g, opening, color) in enumerate(
-            zip(grasps_k, openings_k, grasp_colors)
-        ):
+        for g, opening, color in zip(grasps_k, openings_k, grasp_colors):
             pts, conns = _gripper_lines_in_world(g, opening)
             all_pts.append(pts)
             all_conns.append(conns + offset)
@@ -161,7 +116,6 @@ def visualize_grasps(pc, pred_grasps_cam, scores,
         line_set.colors = o3d.utility.Vector3dVector(np.array(all_colors))
         geometries.append(line_set)
 
-    # Save headless render
     if save_path is not None:
         os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
         render = o3d.visualization.rendering.OffscreenRenderer(1280, 720)
@@ -185,13 +139,11 @@ def visualize_grasps(pc, pred_grasps_cam, scores,
                             eye.astype(np.float32),
                             up.astype(np.float32))
         img = render.render_to_image()
-        # Convert Open3D image to numpy and save with PIL to avoid Open3D's PNG compression artifacts
         img_np = np.asarray(img)
         from PIL import Image as PILImage
         PILImage.fromarray(img_np).save(save_path)
         print(f"Saved render to {save_path}")
 
-    # Interactive window
     if show:
         o3d.visualization.draw_geometries(
             geometries,

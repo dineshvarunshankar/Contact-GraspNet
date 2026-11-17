@@ -1,11 +1,9 @@
-#!/bin/bash
-# Creates .venv/ with the minimal packages needed for visualization (host-side, no Docker).
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
+cd "$(dirname "${BASH_SOURCE[0]}")"
 python3 -m venv cgn_visualize_venv
-cgn_visualize_venv/bin/pip install --upgrade pip
-cgn_visualize_venv/bin/pip install open3d numpy matplotlib pillow
+cgn_visualize_venv/bin/python -m pip install --upgrade pip
+cgn_visualize_venv/bin/python -m pip install 'numpy>=1.24,<2' open3d matplotlib pillow
 
-echo ""
-echo "Venv ready. Run visualization with:"
-echo "  make visualize"
+printf '%s\n' 'Run: cgn_visualize_venv/bin/python -m p1.visualize_predictions'
