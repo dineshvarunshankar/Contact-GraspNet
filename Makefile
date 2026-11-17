@@ -31,7 +31,7 @@ inference:
 	docker run $(RUN_FLAGS) $(GPU_FLAGS) $(IMAGE) \
 		python -m contact_graspnet_pytorch.inference \
 		--ckpt_dir=/opt/cgn/checkpoints/contact_graspnet \
-		--np_path="test_data/*.npy" --local_regions --filter_grasps
+		--np_path="contact_graspnet_pytorch/test_data/*.npy" --local_regions --filter_grasps
 
 visualize:
 	docker run $(RUN_FLAGS) $(GPU_FLAGS) $(IMAGE) \
